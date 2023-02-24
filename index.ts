@@ -79,82 +79,89 @@ server.on('connection', socket => {
 
     // FIXME 未处理粘包、拆包的问题
     socket.on('data', (buffer: Buffer) => {
-        // logger.info(`RECV info from bs : ${buffer.toString()}`);
-        switch (stage) {
-            case Stage.AUTH: {
-                // REQUEST
-                //+-----+----------+----------+
-                //| VER | NMETHODS | METHODS  |
-                //+-----+----------+----------+
-                //|  1  |    1     | 1 to 255 |
-                //+-----+----------+----------+
+        try {
+            switch (stage) {
+                case Stage.AUTH: {
+                    // REQUEST
+                    //+-----+----------+----------+
+                    //| VER | NMETHODS | METHODS  |
+                    //+-----+----------+----------+
+                    //|  1  |    1     | 1 to 255 |
+                    //+-----+----------+----------+
 
 
-                // REPLY
-                //+-----+--------+
-                //| VER | METHOD |
-                //+-----+--------+
-                //|  1  |   1    |
-                //+-----+--------+
-                let VER = buffer[0];
-                let NMETHODS = buffer[1];
-                let METHODS = buffer.subarray(2);
-                logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${JSON.stringify(METHODS)}`);
-                let bf = Buffer.from([0x05, 0x00]);
-                socket.write(bf);
-                stage = Stage.CONNECT;
-                break;
-            }
-            case Stage.CONNECT: {
-                // REQUEST
-                //+-----+-----+-------+------+----------+----------+
-                //| VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
-                //+-----+-----+-------+------+----------+----------+
-                //|  1  |  1  | X'00' |  1   | Variable |    2     |
-                //+-----+-----+-------+------+----------+----------+
+                    // REPLY
+                    //+-----+--------+
+                    //| VER | METHOD |
+                    //+-----+--------+
+                    //|  1  |   1    |
+                    //+-----+--------+
+                    let VER = buffer[0];
+                    let NMETHODS = buffer[1];
+                    let METHODS = buffer.subarray(2);
+                    logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${JSON.stringify(METHODS)}`);
+                    let bf = Buffer.from([0x05, 0x00]);
+                    socket.write(bf);
+                    stage = Stage.CONNECT;
+                    break;
+                }
+                case Stage.CONNECT: {
+                    // REQUEST
+                    //+-----+-----+-------+------+----------+----------+
+                    //| VER | CMD |  RSV  | ATYP | DST.ADDR | DST.PORT |
+                    //+-----+-----+-------+------+----------+----------+
+                    //|  1  |  1  | X'00' |  1   | Variable |    2     |
+                    //+-----+-----+-------+------+----------+----------+
 
-                let VER = buffer[0];
-                if (VER != 0x05) {
-                    logger.warn(`仅支持socks5协议, 客户端发送的VER = ${VER}`);
-                    socket.end();
-                    return;
+                    let VER = buffer[0];
+                    if (VER != 0x05) {
+                        logger.warn(`仅支持socks5协议, 客户端发送的VER = ${VER}`);
+                        socket.end();
+                        return;
+                    }
+                    let CMD = buffer[1];
+                    if (CMD != 0x01) { // 仅支持CONNECT
+                        // 0x01  CONNECT
+                        // 0x02  BIND : 用于目标主机需要主动连接客户机的情况（如 FTP 协议）
+                        // 0x03  UDP ASSOCIATE : UDP 协议的
+                        logger.warn(`仅支持CONNECT 当前CMD= ${CMD}`);
+                        socket.end();
+                        return;
+                    }
+                    let RSV = buffer[2];
+                    let ATYP = buffer[3];
+                    if (ATYP == 0x01) { // IPv4
+                        let ip: string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
+                        let port: number = buffer[8] * 255 + buffer[9];
+                        logger.info(`ATYPE = 0x01, ip = ${ip}, port = ${port}`);
+                        onConnect(ip, port);
+                    } else if (ATYP == 0x03) { // 域名
+                        let domainLen: number = buffer[4];
+                        let domain: string = buffer.subarray(5, 5 + domainLen).toString();
+                        let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
+                        logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
+                        onConnect(domain, port);
+                    } else if (ATYP == 0x04) { // IPv6
+                        logger.error(`暂时不支持IPv6地址!`);
+                        socket.end();
+                    } else { // 非法的ATYPE
+                        logger.error(`非法的ATYPE = ${ATYP}`);
+                        socket.end();
+                    }
+                    break;
                 }
-                let CMD = buffer[1];
-                if (CMD != 0x01) { // 仅支持CONNECT
-                    // 0x01  CONNECT
-                    // 0x02  BIND : 用于目标主机需要主动连接客户机的情况（如 FTP 协议）
-                    // 0x03  UDP ASSOCIATE : UDP 协议的
-                    logger.warn(`仅支持CONNECT 当前CMD= ${CMD}`);
-                    socket.end();
-                    return;
+                case Stage.DELIVER: {
+                    remoteHost.write(buffer);
+                    break;
                 }
-                let RSV = buffer[2];
-                let ATYP = buffer[3];
-                if (ATYP == 0x01) { // IPv4
-                    let ip: string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
-                    let port: number = buffer[8] * 255 + buffer[9];
-                    logger.info(`ATYPE = 0x01, ip = ${ip}, port = ${port}`);
-                    onConnect(ip, port);
-                } else if (ATYP == 0x03) { // 域名
-                    let domainLen: number = buffer[4];
-                    let domain: string = buffer.subarray(5, 5 + domainLen).toString();
-                    let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
-                    logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
-                    onConnect(domain, port);
-                } else if (ATYP == 0x04) { // IPv6
-                    logger.error(`暂时不支持IPv6地址!`);
-                    socket.end();
-                } else { // 非法的ATYPE
-                    logger.error(`非法的ATYPE = ${ATYP}`);
-                    socket.end();
-                }
-                break;
             }
-            case Stage.DELIVER: {
-                remoteHost.write(buffer);
-                break;
-            }
+        } catch (error) {
+            logger.error(`处理数据时发生错误! error = ${error}`);
+            if (remoteHost)
+                remoteHost.end();
+            socket.end();
         }
+
     });
 
     socket.on('close', (hadError: boolean) => {
