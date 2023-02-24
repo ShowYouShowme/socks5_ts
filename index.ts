@@ -24,6 +24,10 @@ enum Stage {
     DELIVER   // 转发数据
 }
 
+// 测试方式
+// ATYP == 0x01  curl --socks5 192.168.2.228:1080 http://www.baidu.com
+// ATYP == 0x03  curl --socks5-hostname 192.168.2.228:1080 http://www.baidu.com
+
 server.on('connection', socket => {
     let stage = Stage.AUTH;
     let ip: string = socket.remoteAddress as string;
