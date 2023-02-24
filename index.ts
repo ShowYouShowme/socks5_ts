@@ -105,6 +105,10 @@ server.on('connection', socket => {
                     let VER = buffer[0];
                     let NMETHODS = buffer[1];
                     let METHODS = buffer.slice(2);
+                    if(buffer.length != 2 + NMETHODS){
+                        logger.warn(`数据包不完整, 部分METHODS 未传过来! stage = AUTH`);
+                        return;
+                    }
                     logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${JSON.stringify(METHODS)}`);
                     let bf = Buffer.from([0x05, 0x00]);
                     socket.write(bf);
