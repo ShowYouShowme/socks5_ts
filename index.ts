@@ -151,7 +151,7 @@ server.on('connection', socket => {
                             return;
                         }
                         let ip: string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
-                        let port: number = buffer[8] * 255 + buffer[9];
+                        let port: number = buffer[8] * 256 + buffer[9];
                         logger.info(`ATYPE = 0x01, ip = ${ip}, port = ${port}`);
                         onConnect(ip, port);
                         buffer.splice(0);
@@ -162,7 +162,7 @@ server.on('connection', socket => {
                             return;
                         }
                         let domain: string = Buffer.from(buffer.slice(5, 5 + domainLen)).toString();
-                        let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
+                        let port: number = buffer[5 + domainLen] * 256 + buffer[5 + domainLen + 1];
                         logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
                         onConnect(domain, port);
                         buffer.splice(0);
