@@ -33,11 +33,57 @@ server.on('connection', socket => {
     let ip: string = socket.remoteAddress as string;
     let family: string = socket.remoteFamily as string;
     let port: number = socket.remotePort as number;
-    console.info(`新链接到来, ip = ${ip}, port = ${port}, family = ${family}`);
-    let remoteHost : net.Socket;
+    // console.info(`新链接到来, ip = ${ip}, port = ${port}, family = ${family}`);
+    let remoteHost: net.Socket;
+
+
+    // address 可以是 IPv4, 也可以是域名
+    function onConnect(address: string, port: number) {
+        remoteHost = net.createConnection({
+            host: address,
+            port: port
+        });
+
+        remoteHost.on('connect', () => {
+            // console.info(`connected to ${port}`);
+            // REPLY
+            //+-----+-----+-------+------+----------+----------+
+            //| VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+            //+-----+-----+-------+------+----------+----------+
+            //|  1  |  1  | X'00' |  1   | Variable |    2     |
+            //+-----+-----+-------+------+----------+----------+
+            let VER = 0x05;
+            let REP = 0x00;
+            let RSV = 0x00;
+            let ATYP = 1;
+            let BND_ADDR = Buffer.from([0x00, 0x00, 0x00, 0x00]);  // 不包含end
+            let BND_PORT = Buffer.from([0x00, 0x00]);
+            let bf: Buffer = Buffer.from([VER, REP, RSV, ATYP, ...BND_ADDR, ...BND_PORT]);
+            socket.write(bf);
+            stage = Stage.DELIVER;
+
+            remoteHost.on('data', (data: Buffer) => {
+                socket.write(data);
+            });
+        });
+
+        remoteHost.on('error', (err: Error) => {
+            logger.error(`远端出错, 关闭链接!`);
+            remoteHost.end();
+            socket.end();
+        });
+
+
+        remoteHost.on('close', (hadError: boolean) => {
+            logger.info(`远端链接关闭!`);
+            // 链接关闭
+            remoteHost.end();
+            socket.end();
+        });
+    }
 
     socket.on('data', (buffer: Buffer) => {
-        logger.info(`RECV info from bs : ${buffer.toString()}`);
+        // logger.info(`RECV info from bs : ${buffer.toString()}`);
         switch (stage) {
             case Stage.AUTH: {
                 // REQUEST
@@ -57,8 +103,8 @@ server.on('connection', socket => {
                 let VER = buffer[0];
                 let NMETHODS = buffer[1];
                 let METHODS = buffer.subarray(2);
-                logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${METHODS}`);
-                let bf = new Buffer([0x05, 0x00]);
+                logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${JSON.stringify(METHODS)}`);
+                let bf = Buffer.from([0x05, 0x00]);
                 socket.write(bf);
                 stage = Stage.CONNECT;
                 break;
@@ -72,60 +118,78 @@ server.on('connection', socket => {
                 //+-----+-----+-------+------+----------+----------+
 
                 let VER = buffer[0];
+                if (VER != 0x05) {
+                    logger.warn(`仅支持socks5协议, 客户端发送的VER = ${VER}`);
+                    socket.end();
+                    return;
+                }
                 let CMD = buffer[1];
+                if (CMD != 0x01) { // 仅支持CONNECT
+                    // 0x01  CONNECT
+                    // 0x02  BIND : 用于目标主机需要主动连接客户机的情况（如 FTP 协议）
+                    // 0x03  UDP ASSOCIATE : UDP 协议的
+                    logger.warn(`仅支持CONNECT 当前CMD= ${CMD}`);
+                    socket.end();
+                    return;
+                }
                 let RSV = buffer[2];
-                let ATYP= buffer[3];
-                if(ATYP == 0x01){ // IPv4
-                    let remoteIP : string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
-                    let port     : number = buffer[8] * 255 +  buffer[9];
-                    remoteHost = net.createConnection({
-                        host : remoteIP,
-                        port : port
-                    });
-                
-                    remoteHost.on('connect', ()=>{
-                        console.info(`connected to ${port}`);
-                        // REPLY
-                        //+-----+-----+-------+------+----------+----------+
-                        //| VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-                        //+-----+-----+-------+------+----------+----------+
-                        //|  1  |  1  | X'00' |  1   | Variable |    2     |
-                        //+-----+-----+-------+------+----------+----------+
-                        let VER = 0x05;
-                        let REP = 0x00;
-                        let RSV = 0x00;
-                        let ATYP= 1;
-                        let BND_ADDR = buffer.subarray(4,8);  // 不包含end
-                        let BND_PORT = buffer.subarray(8);
-                        let bf : Buffer = new Buffer([VER, REP, RSV, ATYP, ...BND_ADDR, ...BND_PORT]);
-                        socket.write(bf);
-                        stage = Stage.DELIVER;
+                let ATYP = buffer[3];
+                if (ATYP == 0x01) { // IPv4
+                    let ip: string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
+                    let port: number = buffer[8] * 255 + buffer[9];
+                    logger.info(`ATYPE = 0x01, ip = ${ip}, port = ${port}`);
+                    onConnect(ip, port);
+                } else if (ATYP == 0x03) { // 域名
+                    let domainLen: number = buffer[4];
+                    let domain: string = buffer.subarray(5, 5 + domainLen).toString();
+                    let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
+                    logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
+                    onConnect(domain, port);
+                    // remoteHost = net.createConnection({
+                    //     host : domain,
+                    //     port : port
+                    // });
 
-                        remoteHost.on('data', (data: Buffer)=>{
-                            socket.write(data);
-                        });
-                    });
+                    // remoteHost.on('connect', ()=>{
+                    //     console.info(`connected to ${port}`);
+                    //     // REPLY
+                    //     //+-----+-----+-------+------+----------+----------+
+                    //     //| VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
+                    //     //+-----+-----+-------+------+----------+----------+
+                    //     //|  1  |  1  | X'00' |  1   | Variable |    2     |
+                    //     //+-----+-----+-------+------+----------+----------+
+                    //     let VER = 0x05;
+                    //     let REP = 0x00;
+                    //     let RSV = 0x00;
+                    //     let ATYP= 1;
+                    //     let BND_ADDR = new Buffer([0x00, 0x00, 0x00, 0x00]);  // 不包含end
+                    //     let BND_PORT = new Buffer([0x00, 0x00]);
+                    //     let bf : Buffer = new Buffer([VER, REP, RSV, ATYP, ...BND_ADDR, ...BND_PORT]);
+                    //     socket.write(bf);
+                    //     stage = Stage.DELIVER;
 
-                    remoteHost.on('error', (err: Error)=>{
-                        logger.error(`远端出错, 关闭链接!`);
-                        remoteHost.end();
-                        socket.end();
-                    });
-                
-                
-                    remoteHost.on('close', (hadError: boolean)=>{
-                        logger.error(`远端链接关闭!`);
-                        // 链接关闭
-                        remoteHost.end();
-                        socket.end();
-                    });
-                } else if(ATYP == 0x03){ // 域名
-                    let domainNameLen : number = buffer[4];
-                    let domainName : string = buffer.subarray(5, domainNameLen).toString();
-                } else if(ATYP == 0x04){ // IPv6
+                    //     remoteHost.on('data', (data: Buffer)=>{
+                    //         socket.write(data);
+                    //     });
+                    // });
+
+                    // remoteHost.on('error', (err: Error)=>{
+                    //     logger.error(`远端出错, 关闭链接!`);
+                    //     remoteHost.end();
+                    //     socket.end();
+                    // });
+
+
+                    // remoteHost.on('close', (hadError: boolean)=>{
+                    //     logger.error(`远端链接关闭!`);
+                    //     // 链接关闭
+                    //     remoteHost.end();
+                    //     socket.end();
+                    // });
+                } else if (ATYP == 0x04) { // IPv6
                     logger.error(`暂时不支持IPv6地址!`);
                     socket.end();
-                } else{ // 非法的ATYPE
+                } else { // 非法的ATYPE
                     logger.error(`非法的ATYPE = ${ATYP}`);
                     socket.end();
                 }
@@ -140,13 +204,13 @@ server.on('connection', socket => {
 
     socket.on('close', (hadError: boolean) => {
         logger.info(`客户端链接断开! hadError = ${hadError}`);
-        if(remoteHost)
+        if (remoteHost)
             remoteHost.end();
         socket.end();
     });
     socket.on('error', (err: Error) => {
         logger.error(`客户端链接异常! err = ${err}`);
-        if(remoteHost)
+        if (remoteHost)
             remoteHost.end();
         socket.end();
     });
