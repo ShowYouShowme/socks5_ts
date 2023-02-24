@@ -3,13 +3,9 @@ import log4js from "log4js";
 
 const logger = log4js.getLogger();
 logger.level = "debug";
-
 const HOST = '0.0.0.0';
 const PORT = 1080;
-// 使用nodejs实现的TCP服务
-// 创建一个 TCP 服务实例
 const server = net.createServer();
-
 // 监听端口
 server.listen(PORT, HOST);
 
@@ -45,7 +41,6 @@ server.on('connection', socket => {
         });
 
         remoteHost.on('connect', () => {
-            // console.info(`connected to ${port}`);
             // REPLY
             //+-----+-----+-------+------+----------+----------+
             //| VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
@@ -82,6 +77,7 @@ server.on('connection', socket => {
         });
     }
 
+    // FIXME 未处理粘包、拆包的问题
     socket.on('data', (buffer: Buffer) => {
         // logger.info(`RECV info from bs : ${buffer.toString()}`);
         switch (stage) {
@@ -145,47 +141,6 @@ server.on('connection', socket => {
                     let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
                     logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
                     onConnect(domain, port);
-                    // remoteHost = net.createConnection({
-                    //     host : domain,
-                    //     port : port
-                    // });
-
-                    // remoteHost.on('connect', ()=>{
-                    //     console.info(`connected to ${port}`);
-                    //     // REPLY
-                    //     //+-----+-----+-------+------+----------+----------+
-                    //     //| VER | REP |  RSV  | ATYP | BND.ADDR | BND.PORT |
-                    //     //+-----+-----+-------+------+----------+----------+
-                    //     //|  1  |  1  | X'00' |  1   | Variable |    2     |
-                    //     //+-----+-----+-------+------+----------+----------+
-                    //     let VER = 0x05;
-                    //     let REP = 0x00;
-                    //     let RSV = 0x00;
-                    //     let ATYP= 1;
-                    //     let BND_ADDR = new Buffer([0x00, 0x00, 0x00, 0x00]);  // 不包含end
-                    //     let BND_PORT = new Buffer([0x00, 0x00]);
-                    //     let bf : Buffer = new Buffer([VER, REP, RSV, ATYP, ...BND_ADDR, ...BND_PORT]);
-                    //     socket.write(bf);
-                    //     stage = Stage.DELIVER;
-
-                    //     remoteHost.on('data', (data: Buffer)=>{
-                    //         socket.write(data);
-                    //     });
-                    // });
-
-                    // remoteHost.on('error', (err: Error)=>{
-                    //     logger.error(`远端出错, 关闭链接!`);
-                    //     remoteHost.end();
-                    //     socket.end();
-                    // });
-
-
-                    // remoteHost.on('close', (hadError: boolean)=>{
-                    //     logger.error(`远端链接关闭!`);
-                    //     // 链接关闭
-                    //     remoteHost.end();
-                    //     socket.end();
-                    // });
                 } else if (ATYP == 0x04) { // IPv6
                     logger.error(`暂时不支持IPv6地址!`);
                     socket.end();
