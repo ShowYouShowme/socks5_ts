@@ -77,11 +77,17 @@ server.on('connection', socket => {
         });
     }
 
-    // FIXME 未处理粘包、拆包的问题
-    socket.on('data', (buffer: Buffer) => {
+    // socket recv缓冲区,用来处理粘包、拆包问题
+    let buffer : number[] = [];
+    socket.on('data', (message: Buffer) => {
         try {
             switch (stage) {
                 case Stage.AUTH: {
+                    buffer.push(...message);
+                    if(buffer.length < 3){
+                        logger.warn(`数据包不完整! stage = AUTH`);
+                        return;
+                    }
                     // REQUEST
                     //+-----+----------+----------+
                     //| VER | NMETHODS | METHODS  |
@@ -98,11 +104,12 @@ server.on('connection', socket => {
                     //+-----+--------+
                     let VER = buffer[0];
                     let NMETHODS = buffer[1];
-                    let METHODS = buffer.subarray(2);
+                    let METHODS = buffer.slice(2);
                     logger.info(`VER = ${VER}, NMETHODS = ${NMETHODS}, METHODS = ${JSON.stringify(METHODS)}`);
                     let bf = Buffer.from([0x05, 0x00]);
                     socket.write(bf);
                     stage = Stage.CONNECT;
+                    buffer.splice(0);
                     break;
                 }
                 case Stage.CONNECT: {
@@ -112,7 +119,11 @@ server.on('connection', socket => {
                     //+-----+-----+-------+------+----------+----------+
                     //|  1  |  1  | X'00' |  1   | Variable |    2     |
                     //+-----+-----+-------+------+----------+----------+
-
+                    buffer.push(...message);
+                    if(buffer.length < 5){
+                        logger.warn(`数据包不完整! stage = CONNECT`);
+                        return;
+                    }
                     let VER = buffer[0];
                     if (VER != 0x05) {
                         logger.warn(`仅支持socks5协议, 客户端发送的VER = ${VER}`);
@@ -131,16 +142,26 @@ server.on('connection', socket => {
                     let RSV = buffer[2];
                     let ATYP = buffer[3];
                     if (ATYP == 0x01) { // IPv4
+                        if(buffer.length < 10){
+                            logger.warn(`数据包不完整! stage = CONNECT ATYPE = 0x01`);
+                            return;
+                        }
                         let ip: string = `${buffer[4]}.${buffer[5]}.${buffer[6]}.${buffer[7]}`;
                         let port: number = buffer[8] * 255 + buffer[9];
                         logger.info(`ATYPE = 0x01, ip = ${ip}, port = ${port}`);
                         onConnect(ip, port);
+                        buffer.splice(0);
                     } else if (ATYP == 0x03) { // 域名
                         let domainLen: number = buffer[4];
-                        let domain: string = buffer.subarray(5, 5 + domainLen).toString();
+                        if(buffer.length < 7 + domainLen){
+                            logger.warn(`数据包不完整! stage = CONNECT ATYPE = 0x03`);
+                            return;
+                        }
+                        let domain: string = Buffer.from(buffer.slice(5, 5 + domainLen)).toString();
                         let port: number = buffer[5 + domainLen] * 255 + buffer[5 + domainLen + 1];
                         logger.info(`ATYPE = 0x03, domainName = ${domain}, port = ${port}`);
                         onConnect(domain, port);
+                        buffer.splice(0);
                     } else if (ATYP == 0x04) { // IPv6
                         logger.error(`暂时不支持IPv6地址!`);
                         socket.end();
@@ -151,7 +172,7 @@ server.on('connection', socket => {
                     break;
                 }
                 case Stage.DELIVER: {
-                    remoteHost.write(buffer);
+                    remoteHost.write(message);
                     break;
                 }
             }
